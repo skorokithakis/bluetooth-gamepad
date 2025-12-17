@@ -1,5 +1,6 @@
 #include "ble_gamepad.h"
 #include "debug.h"
+#include "gamepad_state.h"
 
 #include <BleGamepad.h>
 #include <NimBLEDevice.h>
@@ -80,6 +81,29 @@ bool ble_gamepad_connected() {
     return bleGamepad.isConnected();
 }
 
+static uint8_t internal_button_bit_to_ble_button(uint8_t bit) {
+    // The ESP32-BLE-Gamepad library exposes buttons as HID "Button" usages
+    // 1..N. On Linux this maps as:
+    //   1=A, 2=B, 3=C, 4=X, 5=Y, 6=Z, 7=TL, 8=TR, 9=TL2, 10=TR2,
+    //   11=SELECT, 12=START, 13=MODE, 14=THUMBL, 15=THUMBR, ...
+    // Our normalized layout is XInput-like (A,B,X,Y,LB,RB,BACK,START,...),
+    // so we skip over the Linux "C" position to keep X/Y aligned.
+    switch (bit) {
+        case GAMEPAD_BUTTON_A: return 1;
+        case GAMEPAD_BUTTON_B: return 2;
+        case GAMEPAD_BUTTON_X: return 4;
+        case GAMEPAD_BUTTON_Y: return 5;
+        case GAMEPAD_BUTTON_LB: return 7;
+        case GAMEPAD_BUTTON_RB: return 8;
+        case GAMEPAD_BUTTON_BACK: return 11;
+        case GAMEPAD_BUTTON_START: return 12;
+        case GAMEPAD_BUTTON_GUIDE: return 13;
+        case GAMEPAD_BUTTON_L3: return 14;
+        case GAMEPAD_BUTTON_R3: return 15;
+        default: return (uint8_t)(bit + 1);
+    }
+}
+
 void ble_gamepad_send(const GamepadState& state) {
     if (!bleGamepad.isConnected()) {
         return;
@@ -87,10 +111,11 @@ void ble_gamepad_send(const GamepadState& state) {
 
     // Update buttons.
     for (int i = 0; i < 16; i++) {
+        const uint8_t ble_button = internal_button_bit_to_ble_button((uint8_t)i);
         if (state.buttons & (1 << i)) {
-            bleGamepad.press(i + 1);
+            bleGamepad.press(ble_button);
         } else {
-            bleGamepad.release(i + 1);
+            bleGamepad.release(ble_button);
         }
     }
 
