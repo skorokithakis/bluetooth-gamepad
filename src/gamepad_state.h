@@ -5,7 +5,7 @@
 #include <freertos/semphr.h>
 
 // Normalized gamepad state shared between USB input and BLE output.
-// All axes use the range 0-32767 to match BLE Gamepad defaults.
+// Stick axes use the range -32767..32767 (0 = centered). Triggers are 0..32767.
 struct GamepadState {
     uint32_t buttons;
 

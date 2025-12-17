@@ -37,8 +37,17 @@ static void log_button_presses(uint32_t pressed_mask) {
     }
 }
 
-// Normalize an unsigned 8-bit axis value (0-255) to 0-32767.
-static int16_t normalize_axis_u8(uint8_t value) {
+// Normalize an unsigned 8-bit stick axis (0-255, 128=center) to -32767..32767.
+static int16_t normalize_stick_axis_u8(uint8_t value) {
+    const int32_t delta = (int32_t)value - 128;
+    if (delta >= 0) {
+        return (int16_t)(delta * 32767 / 127);
+    }
+    return (int16_t)(delta * 32767 / 128);
+}
+
+// Normalize an unsigned 8-bit trigger axis (0-255) to 0..32767.
+static int16_t normalize_trigger_axis_u8(uint8_t value) {
     return (int16_t)((uint32_t)value * 32767 / 255);
 }
 
@@ -50,19 +59,69 @@ static uint8_t dpad_value_to_hat(uint8_t value) {
     return value + 1;
 }
 
+// Some generic USB gamepads encode the D-pad as a hat value in the low nibble of
+// one of the report bytes that also contains buttons. Track which byte we
+// detected so we don't accidentally treat the hat nibble as buttons.
+enum class GenericDpadNibbleLocation : uint8_t {
+    Unknown = 0,
+    Byte4LowNibble = 1,
+    Byte5LowNibble = 2,
+};
+
+static GenericDpadNibbleLocation g_generic_dpad_location = GenericDpadNibbleLocation::Unknown;
+
+static bool is_hat_nibble_value(uint8_t nibble) {
+    // Common encodings:
+    // - 0..7 = directions
+    // - 8 or 15 = centered
+    return nibble <= 8 || nibble == 0x0F;
+}
+
 // Parse generic 8-byte HID gamepad report.
 // Common format for cheap USB gamepads.
 static void parse_generic_8byte_report(const uint8_t* data, size_t length) {
     if (length < 6) return;
 
-    const int16_t next_left_stick_x = normalize_axis_u8(data[0]);
-    const int16_t next_left_stick_y = normalize_axis_u8(data[1]);
-    const int16_t next_right_stick_x = normalize_axis_u8(data[2]);
-    const int16_t next_right_stick_y = normalize_axis_u8(data[3]);
-    const uint8_t next_dpad = dpad_value_to_hat(data[4] & 0x0F);
+    const int16_t next_left_stick_x = normalize_stick_axis_u8(data[0]);
+    const int16_t next_left_stick_y = normalize_stick_axis_u8(data[1]);
+    const int16_t next_right_stick_x = normalize_stick_axis_u8(data[2]);
+    const int16_t next_right_stick_y = normalize_stick_axis_u8(data[3]);
+
+    const uint8_t nibble4 = data[4] & 0x0F;
+    const uint8_t nibble5 = data[5] & 0x0F;
+
+    // If we see an invalid hat value (9-14) in one nibble but not the other,
+    // lock onto the other nibble as the hat for this device.
+    if (g_generic_dpad_location == GenericDpadNibbleLocation::Unknown) {
+        const bool nibble4_hatish = is_hat_nibble_value(nibble4);
+        const bool nibble5_hatish = is_hat_nibble_value(nibble5);
+
+        if (!nibble4_hatish && nibble5_hatish) {
+            g_generic_dpad_location = GenericDpadNibbleLocation::Byte5LowNibble;
+        } else if (nibble4_hatish && !nibble5_hatish) {
+            g_generic_dpad_location = GenericDpadNibbleLocation::Byte4LowNibble;
+        } else if ((nibble5 == 0x0F || nibble5 == 0x08) && (nibble4 != 0x0F && nibble4 != 0x08)) {
+            // Centered is often 0x0F (or sometimes 0x08). If only one nibble
+            // reports that centered value, prefer it as the hat.
+            g_generic_dpad_location = GenericDpadNibbleLocation::Byte5LowNibble;
+        } else if ((nibble4 == 0x0F || nibble4 == 0x08) && (nibble5 != 0x0F && nibble5 != 0x08)) {
+            g_generic_dpad_location = GenericDpadNibbleLocation::Byte4LowNibble;
+        }
+    }
+
+    const uint8_t dpad_raw =
+        (g_generic_dpad_location == GenericDpadNibbleLocation::Byte5LowNibble) ? nibble5 : nibble4;
+    const uint8_t next_dpad = dpad_value_to_hat(dpad_raw);
 
     uint32_t next_buttons = 0;
-    if (length > 5) next_buttons |= data[5];
+    if (length > 5) {
+        uint8_t buttons_byte0 = data[5];
+        if (g_generic_dpad_location == GenericDpadNibbleLocation::Byte5LowNibble) {
+            // Low nibble is the hat; avoid exposing it as buttons 1-4.
+            buttons_byte0 &= 0xF0;
+        }
+        next_buttons |= buttons_byte0;
+    }
     if (length > 6) next_buttons |= (uint32_t)data[6] << 8;
 
     const int16_t next_left_trigger = 0;
@@ -113,10 +172,10 @@ static void parse_dualshock4_report(const uint8_t* data, size_t length) {
         return;
     }
 
-    const int16_t next_left_stick_x = normalize_axis_u8(data[1]);
-    const int16_t next_left_stick_y = normalize_axis_u8(data[2]);
-    const int16_t next_right_stick_x = normalize_axis_u8(data[3]);
-    const int16_t next_right_stick_y = normalize_axis_u8(data[4]);
+    const int16_t next_left_stick_x = normalize_stick_axis_u8(data[1]);
+    const int16_t next_left_stick_y = normalize_stick_axis_u8(data[2]);
+    const int16_t next_right_stick_x = normalize_stick_axis_u8(data[3]);
+    const int16_t next_right_stick_y = normalize_stick_axis_u8(data[4]);
     const uint8_t next_dpad = dpad_value_to_hat(data[5] & 0x0F);
 
     if (xSemaphoreTake(g_gamepad_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
@@ -154,8 +213,8 @@ static void parse_dualshock4_report(const uint8_t* data, size_t length) {
     if (btn2 & 0x80) next_buttons |= (1 << GAMEPAD_BUTTON_R3);      // R3
     if (data[7] & 0x01) next_buttons |= (1 << GAMEPAD_BUTTON_GUIDE); // Logo
 
-    const int16_t next_left_trigger = normalize_axis_u8(data[8]);
-    const int16_t next_right_trigger = normalize_axis_u8(data[9]);
+    const int16_t next_left_trigger = normalize_trigger_axis_u8(data[8]);
+    const int16_t next_right_trigger = normalize_trigger_axis_u8(data[9]);
 
     const bool state_changed =
         prev_state.left_stick_x != next_left_stick_x ||
@@ -205,4 +264,8 @@ void parse_hid_report(const uint8_t* data, size_t length) {
 
     // Fall back to generic parsing.
     parse_generic_8byte_report(data, length);
+}
+
+void hid_parser_reset() {
+    g_generic_dpad_location = GenericDpadNibbleLocation::Unknown;
 }

@@ -70,6 +70,7 @@ static void hid_host_interface_callback(hid_host_device_handle_t hid_device_hand
                 g_gamepad_state.changed = true;
                 xSemaphoreGive(g_gamepad_mutex);
             }
+            hid_parser_reset();
 
             hid_host_device_close(hid_device_handle);
             break;
