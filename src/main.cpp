@@ -171,6 +171,10 @@ void loop() {
     static GamepadState pending_state = {0};
     static bool has_pending = false;
 
+#ifndef DISABLE_USB_HOST
+    usb_host_poll();
+#endif
+
     // Check for gamepad state updates from USB with mutex protection.
     GamepadState local_state;
     bool has_update = false;

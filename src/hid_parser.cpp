@@ -156,28 +156,27 @@ static void parse_generic_8byte_report(const uint8_t* data, size_t length) {
     if (g_generic_dpad_location == GenericDpadNibbleLocation::Byte5LowNibble) {
         const uint32_t low_nibble = next_buttons & 0x0Fu;
         const uint32_t face_bits = next_buttons & 0xF0u;
-        if (low_nibble == 0 && face_bits != 0) {
+        const bool has_hat_and_face_in_high_nibble = (low_nibble == 0 && face_bits != 0);
+
+        if (has_hat_and_face_in_high_nibble) {
+            // Observed order for these controllers:
+            // bit4=Y, bit5=B, bit6=A, bit7=X.
             next_buttons &= ~0xF0u;
             if (face_bits & 0x10) next_buttons |= (1u << GAMEPAD_BUTTON_Y);
             if (face_bits & 0x20) next_buttons |= (1u << GAMEPAD_BUTTON_B);
             if (face_bits & 0x40) next_buttons |= (1u << GAMEPAD_BUTTON_A);
             if (face_bits & 0x80) next_buttons |= (1u << GAMEPAD_BUTTON_X);
-        }
 
-        // Additional compatibility for minimal controllers without stick clicks:
-        // Some devices report START/SELECT as higher-numbered buttons that land
-        // in our L3 and GUIDE bits when treated as a flat bitmap. If we detect
-        // those bits but not the expected START/BACK bits, remap them.
-        const uint32_t start_mask = (1u << GAMEPAD_BUTTON_START);
-        const uint32_t back_mask = (1u << GAMEPAD_BUTTON_BACK);
-        const uint32_t l3_mask = (1u << GAMEPAD_BUTTON_L3);
-        const uint32_t guide_mask = (1u << GAMEPAD_BUTTON_GUIDE);
-
-        if ((next_buttons & l3_mask) && !(next_buttons & start_mask)) {
-            next_buttons = (next_buttons & ~l3_mask) | start_mask;
-        }
-        if ((next_buttons & guide_mask) && !(next_buttons & back_mask)) {
-            next_buttons = (next_buttons & ~guide_mask) | back_mask;
+            // More observed mappings on the same class of controller:
+            // raw bit11 = right shoulder, raw bit12 = start.
+            const uint32_t raw_rb = (1u << 11);
+            const uint32_t raw_start = (1u << 12);
+            if (next_buttons & raw_rb) {
+                next_buttons = (next_buttons & ~raw_rb) | (1u << GAMEPAD_BUTTON_RB);
+            }
+            if (next_buttons & raw_start) {
+                next_buttons = (next_buttons & ~raw_start) | (1u << GAMEPAD_BUTTON_START);
+            }
         }
     }
 
