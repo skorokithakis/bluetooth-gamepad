@@ -21,6 +21,7 @@ bool usb_host_gamepad_connected() {
 
 #include "gamepad_state.h"
 #include "hid_parser.h"
+#include "hid_descriptor.h"
 
 #include <Arduino.h>
 #include <atomic>
@@ -33,6 +34,10 @@ bool usb_host_gamepad_connected() {
 #include <esp_log.h>
 
 #include "hid_host.h"
+
+// Global report map for the connected HID device.
+HidReportMapCollection g_hid_report_map;
+bool g_hid_report_map_valid = false;
 
 static const char* TAG = "USB_HOST";
 
@@ -135,6 +140,22 @@ static void hid_host_device_event(hid_host_device_handle_t hid_device_handle,
                 ESP_LOGI(TAG, "Ignoring keyboard/mouse device");
                 hid_host_device_close(hid_device_handle);
                 return;
+            }
+
+            // Fetch and parse the HID report descriptor.
+            {
+                size_t descriptor_length = 0;
+                const uint8_t* descriptor = hid_host_get_report_descriptor(hid_device_handle, &descriptor_length);
+                if (descriptor && descriptor_length > 0) {
+                    ESP_LOGI(TAG, "Got HID descriptor, %u bytes", (unsigned)descriptor_length);
+                    g_hid_report_map_valid = hid_parse_report_descriptor(descriptor, descriptor_length, &g_hid_report_map);
+                    if (!g_hid_report_map_valid) {
+                        ESP_LOGW(TAG, "Failed to parse HID descriptor, falling back to heuristic parsing");
+                    }
+                } else {
+                    ESP_LOGW(TAG, "No HID descriptor available, using heuristic parsing");
+                    g_hid_report_map_valid = false;
+                }
             }
 
             if (hid_host_device_start(hid_device_handle) == ESP_OK) {
@@ -305,6 +326,7 @@ static bool usb_host_start_locked() {
 
 static void usb_host_stop_locked() {
     g_gamepad_connected = false;
+    g_hid_report_map_valid = false;
 
     if (g_hid_installed.load()) {
         esp_err_t err = hid_host_uninstall();

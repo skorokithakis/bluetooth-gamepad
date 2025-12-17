@@ -37,6 +37,12 @@ The project uses a custom partition table referenced by `platformio.ini`:
 
 At a high level, the firmware runs a USB Host stack to enumerate a connected HID controller, parses the HID reports into a normalized internal `GamepadState`, then maps that state into BLE HID gamepad reports exposed via the BLE gamepad library. The USB side and BLE side are decoupled through this state representation so HID parsing and BLE report generation stay independent and easy to evolve.
 
+## Button mapping note
+
+USB HID gamepads are not required to agree on which physical button is “Button 1/2/3/4”, and many devices use different ordering for face buttons and meta buttons (Start/Select/L3/R3/etc). Operating systems often “recognize” a controller because their HID drivers and controller databases (quirks/hwdb/SDL mappings) contain device-specific mappings.
+
+This firmware is acting as a bridge: it reads the controller’s raw HID reports and then exposes a *generic* BLE HID gamepad report descriptor. The project normalizes all controllers into a canonical internal button layout (`GamepadButton` in `src/gamepad_state.h`), then maps that canonical layout into the BLE button indices that Linux maps to `BTN_*` codes (`canonical_button_to_ble_button` in `src/ble_gamepad.cpp`). If your controller’s HID “Button N” ordering differs, adjust the HID→canonical mapping in `src/hid_parser.cpp` (`hid_button_number_to_canonical_mask`). Use the debug log “Button bit N pressed” output to see which internal bit toggled.
+
 ## Code map
 
 - `src/usb_host.*`: USB Host setup and device/report handling
@@ -44,4 +50,3 @@ At a high level, the firmware runs a USB Host stack to enumerate a connected HID
 - `src/gamepad_state.h`: shared representation of buttons/axes
 - `src/ble_gamepad.*`: BLE gamepad setup and report sending
 - `src/main.cpp`: initialization and main loop orchestration
-

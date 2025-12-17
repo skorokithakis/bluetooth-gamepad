@@ -25,6 +25,11 @@ void ble_gamepad_init() {
     config.setAutoReport(false);
     config.setButtonCount(16);
     config.setHatSwitchCount(1);
+    // Keep Start/Select as regular buttons (Button 11/12 in the BLE descriptor).
+    // Some hosts (notably Linux/BlueZ) do not consistently map Generic Desktop
+    // Start/Select usages to BTN_START/BTN_SELECT for gamepads.
+    config.setIncludeStart(false);
+    config.setIncludeSelect(false);
 
     config.setIncludeXAxis(true);
     config.setIncludeYAxis(true);
@@ -81,26 +86,22 @@ bool ble_gamepad_connected() {
     return bleGamepad.isConnected();
 }
 
-static uint8_t internal_button_bit_to_ble_button(uint8_t bit) {
-    // The ESP32-BLE-Gamepad library exposes buttons as HID "Button" usages
-    // 1..N. On Linux this maps as:
-    //   1=A, 2=B, 3=C, 4=X, 5=Y, 6=Z, 7=TL, 8=TR, 9=TL2, 10=TR2,
-    //   11=SELECT, 12=START, 13=MODE, 14=THUMBL, 15=THUMBR, ...
-    // Our normalized layout is XInput-like (A,B,X,Y,LB,RB,BACK,START,...),
-    // so we skip over the Linux "C" position to keep X/Y aligned.
-    switch (bit) {
-        case GAMEPAD_BUTTON_A: return 1;
-        case GAMEPAD_BUTTON_B: return 2;
-        case GAMEPAD_BUTTON_X: return 4;
-        case GAMEPAD_BUTTON_Y: return 5;
-        case GAMEPAD_BUTTON_LB: return 7;
-        case GAMEPAD_BUTTON_RB: return 8;
-        case GAMEPAD_BUTTON_BACK: return 11;
-        case GAMEPAD_BUTTON_START: return 12;
-        case GAMEPAD_BUTTON_GUIDE: return 13;
-        case GAMEPAD_BUTTON_L3: return 14;
-        case GAMEPAD_BUTTON_R3: return 15;
-        default: return (uint8_t)(bit + 1);
+static uint8_t canonical_button_to_ble_button(GamepadButton button) {
+    // Linux's HID gamepad mapping expects a "standard" button ordering.
+    // Note: BLE button indices are 1-based.
+    switch (button) {
+        case GAMEPAD_BUTTON_A: return 1;       // BTN_SOUTH / BTN_A
+        case GAMEPAD_BUTTON_B: return 2;       // BTN_EAST  / BTN_B
+        case GAMEPAD_BUTTON_X: return 4;       // BTN_WEST  / BTN_X (3=BTN_C unused)
+        case GAMEPAD_BUTTON_Y: return 5;       // BTN_NORTH / BTN_Y
+        case GAMEPAD_BUTTON_LB: return 7;      // BTN_TL
+        case GAMEPAD_BUTTON_RB: return 8;      // BTN_TR
+        case GAMEPAD_BUTTON_BACK: return 11;   // BTN_SELECT
+        case GAMEPAD_BUTTON_START: return 12;  // BTN_START
+        case GAMEPAD_BUTTON_GUIDE: return 13;  // BTN_MODE / Guide
+        case GAMEPAD_BUTTON_L3: return 14;     // BTN_THUMBL
+        case GAMEPAD_BUTTON_R3: return 15;     // BTN_THUMBR
+        default: return 0;
     }
 }
 
@@ -109,14 +110,14 @@ void ble_gamepad_send(const GamepadState& state) {
         return;
     }
 
-    // Update buttons.
-    for (int i = 0; i < 16; i++) {
-        const uint8_t ble_button = internal_button_bit_to_ble_button((uint8_t)i);
-        if (state.buttons & (1 << i)) {
-            bleGamepad.press(ble_button);
-        } else {
-            bleGamepad.release(ble_button);
-        }
+    // Update buttons (canonical layout in GamepadState).
+    for (uint8_t bit = 0; bit <= GAMEPAD_BUTTON_GUIDE; bit++) {
+        const auto button = static_cast<GamepadButton>(bit);
+        const uint8_t ble_button = canonical_button_to_ble_button(button);
+        if (ble_button == 0) continue;
+        const bool pressed = (state.buttons & (1u << bit)) != 0;
+        if (pressed) bleGamepad.press(ble_button);
+        else bleGamepad.release(ble_button);
     }
 
     // Update axes.
