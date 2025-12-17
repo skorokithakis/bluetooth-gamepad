@@ -6,6 +6,18 @@
 
 static BleGamepad bleGamepad("USB-BT Gamepad", "DIY", 100);
 
+// The ESP32-BLE-Gamepad library defaults to unsigned 16-bit axis ranges
+// (LOGICAL_MINIMUM=0, LOGICAL_MAXIMUM=32767). Our internal stick values are
+// normalized to signed -32767..32767, so convert them to 0..32767 before
+// calling setAxes(), otherwise negative values wrap/clamp and cause twitching
+// and missing "left" movement on hosts (e.g. Linux evdev).
+static int16_t stick_s16_to_u15(int16_t value) {
+    int32_t clamped = value;
+    if (clamped < -32767) clamped = -32767;
+    if (clamped > 32767) clamped = 32767;
+    return (int16_t)((clamped + 32767) / 2);
+}
+
 void ble_gamepad_init() {
     BleGamepadConfiguration config;
 
@@ -86,11 +98,11 @@ void ble_gamepad_send(const GamepadState& state) {
     // BLE Gamepad setAxes order: X, Y, Z, Rx, Ry, Rz, slider1, slider2.
     // We map: left stick X/Y, left trigger (Z), right stick X/Y, right trigger (Rz).
     bleGamepad.setAxes(
-        state.left_stick_x,
-        state.left_stick_y,
+        stick_s16_to_u15(state.left_stick_x),
+        stick_s16_to_u15(state.left_stick_y),
         state.left_trigger,
-        state.right_stick_x,
-        state.right_stick_y,
+        stick_s16_to_u15(state.right_stick_x),
+        stick_s16_to_u15(state.right_stick_y),
         state.right_trigger,
         0,
         0
