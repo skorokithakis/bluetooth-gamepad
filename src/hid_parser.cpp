@@ -6,6 +6,12 @@
 
 static const char* TAG = "HID_PARSER";
 
+#ifndef STICK_DEADZONE
+// Deadzone applied to normalized stick axes (-32767..32767).
+// Override via PlatformIO build flag `-DSTICK_DEADZONE=<value>`.
+#define STICK_DEADZONE 3000
+#endif
+
 static const char* button_name_for_bit(int bit) {
     switch (bit) {
         case GAMEPAD_BUTTON_A: return "A";
@@ -37,13 +43,27 @@ static void log_button_presses(uint32_t pressed_mask) {
     }
 }
 
+static int16_t apply_stick_deadzone(int16_t value) {
+    int32_t v = value;
+    if (v > 32767) v = 32767;
+    if (v < -32767) v = -32767;
+
+    int32_t mag = (v < 0) ? -v : v;
+    const int32_t dz = (STICK_DEADZONE < 0) ? 0 : (STICK_DEADZONE > 32767 ? 32767 : STICK_DEADZONE);
+    if (mag <= dz) return 0;
+
+    // Rescale so full range is still reachable after the deadzone.
+    const int32_t scaled = (mag - dz) * 32767 / (32767 - dz);
+    return (int16_t)((v < 0) ? -scaled : scaled);
+}
+
 // Normalize an unsigned 8-bit stick axis (0-255, 128=center) to -32767..32767.
 static int16_t normalize_stick_axis_u8(uint8_t value) {
     const int32_t delta = (int32_t)value - 128;
     if (delta >= 0) {
-        return (int16_t)(delta * 32767 / 127);
+        return apply_stick_deadzone((int16_t)(delta * 32767 / 127));
     }
-    return (int16_t)(delta * 32767 / 128);
+    return apply_stick_deadzone((int16_t)(delta * 32767 / 128));
 }
 
 // Normalize an unsigned 8-bit trigger axis (0-255) to 0..32767.

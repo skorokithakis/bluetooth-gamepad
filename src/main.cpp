@@ -9,6 +9,11 @@
 static const int PIN_RGB_LED = 48;
 static const int PIN_BOOT_BUTTON = 0;
 
+// Rate-limit HID reports to reduce BLE airtime and BT coexistence issues.
+#ifndef GAMEPAD_REPORT_HZ
+#define GAMEPAD_REPORT_HZ 50
+#endif
+
 // RGB LED is active-low on this board.
 static const bool LED_ON = LOW;
 static const bool LED_OFF = HIGH;
@@ -160,6 +165,12 @@ void setup() {
 }
 
 void loop() {
+    const unsigned long report_interval_ms =
+        (GAMEPAD_REPORT_HZ <= 0) ? 20 : max(1UL, (1000UL / (unsigned long)GAMEPAD_REPORT_HZ));
+    static unsigned long last_report_at = 0;
+    static GamepadState pending_state = {0};
+    static bool has_pending = false;
+
     // Check for gamepad state updates from USB with mutex protection.
     GamepadState local_state;
     bool has_update = false;
@@ -174,8 +185,16 @@ void loop() {
     }
 
     if (has_update) {
-        ble_gamepad_send(local_state);
-        g_activity_flash_until = millis() + 50;
+        pending_state = local_state;
+        has_pending = true;
+    }
+
+    const unsigned long now = millis();
+    if (has_pending && ble_gamepad_connected() && (now - last_report_at >= report_interval_ms)) {
+        ble_gamepad_send(pending_state);
+        g_activity_flash_until = now + 50;
+        last_report_at = now;
+        has_pending = false;
     }
 
     // Update status.
